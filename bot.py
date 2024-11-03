@@ -20,15 +20,7 @@ logger = logging.getLogger(__name__)
 # Predefined list of items (url and image pairs)
 ITEMS = [
     {"url": "https://xpshort.com/XOVwc", "image": "https://ibb.co/rb0dHzC"},
-    {"url": "https://xpshort.com/ZEq6U7", "image": "https://ibb.co/G9w84Sq"},
-    {"url": "https://xpshort.com/4vlp43", "image": "https://ibb.co/yF1XhbY"},
-    {"url": "https://xpshort.com/8YsEjd", "image": "https://ibb.co/1mrpSB3"},
-    {"url": "https://xpshort.com/FoD4c", "image": "https://ibb.co/Zgx8Rtj"},
-    {"url": "https://xpshort.com/BqVR4k", "image": "https://ibb.co/dtzY5F9"},
-    {"url": "https://xpshort.com/fn3lp", "image": "https://ibb.co/N3c5xMy"},
-    {"url": "https://xpshort.com/QyzDaX", "image": "https://ibb.co/ys7tzTn"},
-    {"url": "https://xpshort.com/zkCxt5", "image": "https://ibb.co/mJXb2vs"},
-    {"url": "https://xpshort.com/5IoFJ", "image": "https://ibb.co/b7yHRPV"},
+    # Add more items as needed
 ]
 
 ACCESS_DENIED_PHOTO = "https://upload.wikimedia.org/wikipedia/en/thumb/6/68/Telegram_access_denied.jpg/800px-Telegram_access_denied.jpg?20200919053248"
@@ -86,7 +78,8 @@ def start(update: Update, context: CallbackContext):
                           f"/gen - Get a random item\n" \
                           f"/alive - Check if the bot is running\n" \
                           f"/help - Get help\n" \
-                          f"/vip - Access VIP content\n\n" \
+                          f"/vip - Access VIP content\n" \
+                          f"/referral - Check your referral count\n\n" \
                           f"Your referral link: {referral_link}"
         update.message.reply_text(welcome_message)
     else:
@@ -122,8 +115,22 @@ def help_command(update: Update, context: CallbackContext):
                    "/gen - Get a random item\n" \
                    "/alive - Check if the bot is running\n" \
                    "/help - Get help\n" \
-                   "/vip - Access VIP content"
+                   "/vip - Access VIP content\n" \
+                   "/referral - Check your referral count"
     update.message.reply_text(help_message)
+
+# Referral command
+def referral(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    referral_count = users_data.get(user_id, {}).get("referrals", 0)
+    referral_link = f"https://t.me/{bot.username}?start={user_id}"
+    
+    # Create referral message with button
+    message_text = f"Your referral count: {referral_count}\n\nShare this link to refer others:\n{referral_link}"
+    keyboard = [[InlineKeyboardButton("Share Referral Link", url=referral_link)]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    update.message.reply_text(message_text, reply_markup=reply_markup)
 
 # VIP command
 def vip(update: Update, context: CallbackContext):
@@ -148,6 +155,7 @@ def main():
     dispatcher.add_handler(CommandHandler("alive", alive))
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("vip", vip))
+    dispatcher.add_handler(CommandHandler("referral", referral))
 
     # Register the error handler
     dispatcher.add_error_handler(error_handler)
