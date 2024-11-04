@@ -1,42 +1,52 @@
 import logging
 import json
 import random
+import os
+import tempfile
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackContext
-from telegram.error import BadRequest
+from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters, JobQueue
+from telegram.error import BadRequest, TelegramError
+import time
 
-# Bot token and channel username (replace with your actual details)
-BOT_TOKEN = "8044627800:AAGvCBiRHSlP6aIEr4mI284TrzL2zIYAt4I"  # Replace with your bot token
+# Bot token and channel username
+BOT_TOKEN = "7993719241:AAE6ItGn4ciaJv8c_Hjwlt01lTqhuqj9j8Q"  # Replace with your bot token
 CHANNEL_USERNAME = "@megasaruku0"  # Replace with your channel username
+ADMIN_ID = 1134468682  # Replace with your Telegram user ID
 
 # File to save and load user data
 DATA_FILE = "users_data.json"
+ITEMS_FILE = 'items.json'
 
 # Initialize bot and set up logging
 bot = Bot(token=BOT_TOKEN)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Predefined list of items (url and image pairs)
-ITEMS = [
-    {"url": "https://xpshort.com/XOVwc", "image": "https://ibb.co/rb0dHzC"},
-    # Add more items as needed
-]
-
-ACCESS_DENIED_PHOTO = "https://upload.wikimedia.org/wikipedia/en/thumb/6/68/Telegram_access_denied.jpg/800px-Telegram_access_denied.jpg?20200919053248"
-
 # Load user data from file
 def load_data():
     try:
         with open(DATA_FILE, "r") as file:
             return json.load(file)
-    except FileNotFoundError:
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 # Save user data to file
-def save_data():
+def save_data(users_data):
     with open(DATA_FILE, "w") as file:
         json.dump(users_data, file)
+
+# Load items from JSON file
+def load_items():
+    try:
+        with open(ITEMS_FILE, 'r') as file:
+            return json.load(file)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+# Save items to JSON file
+def save_items(items):
+    with open(ITEMS_FILE, 'w') as file:
+        json.dump(items, file, indent=4)
 
 # Initialize user data
 users_data = load_data()
@@ -46,120 +56,241 @@ def check_channel_membership(user_id):
     try:
         member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in ["member", "administrator", "creator"]
-    except Exception as e:
+    except TelegramError as e:
         logger.error(f"Error checking membership: {e}")
         return False
 
-# Start command with referral tracking
+# Start command with referral tracking and storing user's name
 def start(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
-    referrer_id = context.args[0] if context.args else None
+    try:
+        user_id = str(update.effective_user.id)
+        referrer_id = context.args[0] if context.args else None
 
-    if user_id not in users_data:
-        users_data[user_id] = {"referrals": 0, "is_vip": False}
-        
-        # Check if the user was referred
-        if referrer_id and referrer_id != user_id and referrer_id in users_data:
-            users_data[referrer_id]["referrals"] += 1
-            save_data()  # Save after updating referral count
+        first_name = update.effective_user.first_name
+        last_name = update.effective_user.last_name if update.effective_user.last_name else ""
 
-            # Grant VIP status if referrals reach 50
-            if users_data[referrer_id]["referrals"] >= 50 and not users_data[referrer_id]["is_vip"]:
-                users_data[referrer_id]["is_vip"] = True
-                save_data()  # Save VIP status
-                bot.send_message(chat_id=int(referrer_id), text="Congratulations! You've earned VIP status!")
+        if user_id not in users_data:
+            users_data[user_id] = {"first_name": first_name, "last_name": last_name, "referrals": 0, "is_vip": False}
+            
+            if referrer_id and referrer_id != user_id and referrer_id in users_data:
+                users_data[referrer_id]["referrals"] += 1
+                save_data(users_data)
 
-    save_data()  # Save new user info
+                if users_data[referrer_id]["referrals"] >= 25 and not users_data[referrer_id]["is_vip"]:
+                    users_data[referrer_id]["is_vip"] = True
+                    save_data(users_data)
+                    bot.send_message(chat_id=int(referrer_id), text="Congratulations! You've earned VIP status! \nContact @Vip_support0bot")
 
-    # Generate and send welcome message or access denied message
-    if check_channel_membership(user_id):
-        referral_link = f"https://t.me/{bot.username}?start={user_id}"
-        welcome_message = f"Welcome to the bot! Here are the commands you can use:\n\n" \
-                          f"/gen - Get a random item\n" \
-                          f"/alive - Check if the bot is running\n" \
-                          f"/help - Get help\n" \
-                          f"/vip - Access VIP content\n" \
-                          f"/referral - Check your referral count\n\n" \
-                          f"Your referral link: {referral_link}"
-        update.message.reply_text(welcome_message)
-    else:
-        keyboard = [[InlineKeyboardButton("Join Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        caption = "Access Denied 🚫\n\nYou must join the channel to use the bot."
-        update.message.reply_photo(photo=ACCESS_DENIED_PHOTO, caption=caption, reply_markup=reply_markup)
+        save_data(users_data)
+
+        if check_channel_membership(user_id):
+            referral_link = f"https://t.me/{bot.username}?start={user_id}"
+            welcome_message = f"Welcome to the bot, {first_name} {last_name}! 🎉\n\n" \
+                              f"Here are the commands you can use:\n\n" \
+                              f"/gen - Get a random item\n" \
+                              f"/alive - Check if the bot is running\n" \
+                              f"/help - Get help\n" \
+                              f"/vip - Access VIP content\n" \
+                              f"/referral - Check your referral count\n\n" \
+                              f"Your referral link: {referral_link}"
+            update.message.reply_text(welcome_message)
+        else:
+            keyboard = [[InlineKeyboardButton("Join Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            caption = "Access Denied 🚫\n\nYou must join the channel to use the bot."
+            update.message.reply_photo(photo="https://upload.wikimedia.org/wikipedia/en/thumb/6/68/Telegram_access_denied.jpg/800px-Telegram_access_denied.jpg?20200919053248", caption=caption, reply_markup=reply_markup)
+    except Exception as e:
+        logger.error(f"Error in start command: {e}")
+        update.message.reply_text("An error occurred while processing your request. Please try again later.")
 
 # Command to generate random item
 def gen(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
-    if check_channel_membership(user_id):
-        item = random.choice(ITEMS)
-        try:
-            caption = f"Enjoy mawa...❤️: [Click Here]({item['url']})"
-            update.message.reply_photo(photo=item["image"], caption=caption, parse_mode='Markdown')
-        except BadRequest as e:
-            logger.error(f"Failed to send photo: {e}")
-            update.message.reply_text("Oops! There was an issue with sending the photo. Please try again later.")
-    else:
-        keyboard = [[InlineKeyboardButton("Join Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        caption = "Access Denied 🚫\n\nYou must join the channel to use the bot."
-        update.message.reply_photo(photo=ACCESS_DENIED_PHOTO, caption=caption, reply_markup=reply_markup)
+    try:
+        items = load_items()
+        if items:
+            user_id = str(update.effective_user.id)
+            if check_channel_membership(user_id):
+                item = random.choice(items)
+                update.message.reply_photo(photo=item['image'], caption=f"Enjoy mawa...❤️\nLink: {item['url']}")
+            else:
+                keyboard = [[InlineKeyboardButton("Join Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                caption = "Access Denied 🚫\n\nYou must join the channel to use the bot."
+                update.message.reply_photo(photo="https://upload.wikimedia.org/wikipedia/en/thumb/6/68/Telegram_access_denied.jpg/800px-Telegram_access_denied.jpg?20200919053248", caption=caption, reply_markup=reply_markup)
+        else:
+            update.message.reply_text("No items available.")
+    except Exception as e:
+        logger.error(f"Error in gen command: {e}")
+        update.message.reply_text("An error occurred while generating the item. Please try again later.")
 
 # Alive command
 def alive(update: Update, context: CallbackContext):
-    update.message.reply_text("The bot is alive! 😊")
+    update.message.reply_text("Bot is Alive ⚡")
 
 # Help command
 def help_command(update: Update, context: CallbackContext):
     help_message = "Here are the commands you can use:\n\n" \
-                   "/gen - Get a random item\n" \
-                   "/alive - Check if the bot is running\n" \
-                   "/help - Get help\n" \
-                   "/vip - Access VIP content\n" \
-                   "/referral - Check your referral count"
+                   "/gen - Get a random item 🎁\n" \
+                   "/alive - Check if the bot is running 🏃‍♂️\n" \
+                   "/help - Get help ❓\n" \
+                   "/vip - Access VIP content 🌟\n" \
+                   "/referral - See your referral count 👥"
     update.message.reply_text(help_message)
+
+# VIP command
+def vip(update: Update, context: CallbackContext):
+    message = (
+        "To unlock VIP status, you need to refer 25 members! 🎉\n"
+        "\n"
+        "What does VIP status give you?\n"
+        "- Access to ad-free content\n"
+        "- Exclusive links without interruptions\n"
+        "\n"
+        "If you're interested in a VIP subscription:\n"
+        "- Monthly: ₹100\n"
+        "- Lifetime: ₹300\n"
+        "\n"
+        "For more information or assistance, please contact: @Vip_support0bot 📩"
+    )
+
+    user_id = str(update.effective_user.id)
+    if user_id in users_data and users_data[user_id]["is_vip"]:
+        update.message.reply_text("Welcome, VIP! Enjoy your exclusive content 🔥")
+    else:
+        update.message.reply_text(message)
 
 # Referral command
 def referral(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
     referral_count = users_data.get(user_id, {}).get("referrals", 0)
     referral_link = f"https://t.me/{bot.username}?start={user_id}"
-    
-    # Create referral message with button
-    message_text = f"Your referral count: {referral_count}\n\nShare this link to refer others:\n{referral_link}"
-    keyboard = [[InlineKeyboardButton("Share Referral Link", url=referral_link)]]
+    keyboard = [[InlineKeyboardButton("Refer a Friend", switch_inline_query="")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text(f"You have referred {referral_count}. friends.", reply_markup=reply_markup)
+
+# Admin-only data command
+def data(update: Update, context: CallbackContext):
+    if update.effective_user.id != ADMIN_ID:
+        update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.json') as temp_file:
+            temp_file.write(json.dumps(users_data, indent=4).encode('utf-8'))
+            temp_file_path = temp_file.name
+
+        with open(temp_file_path, 'rb') as file:
+            context.bot.send_document(chat_id=ADMIN_ID, document=file, filename='users_data.json')
+    except Exception as e:
+        logger.error(f"Error sending data to admin: {e}")
+
+# Send user data to admin every hour
+def hourly_data_send(context: CallbackContext):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.json') as temp_file:
+            temp_file.write(json.dumps(users_data, indent=4).encode('utf-8'))
+            temp_file_path = temp_file.name
+
+        with open(temp_file_path, 'rb') as file:
+            context.bot.send_document(chat_id=ADMIN_ID, document=file, filename='users_data.json')
+    except Exception as e:
+        logger.error(f"Error sending hourly data to admin: {e}")
+
+# Command to add a new item (admin only)
+# Command to add a new item (admin only)
+def add_item(update: Update, context: CallbackContext):
+    if update.effective_user.id != ADMIN_ID:
+        update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    if len(context.args) < 2:
+        update.message.reply_text("Please provide a URL and an image link.")
+        return
+
+    url = context.args[0]
+    image_url = context.args[1]
+
+    items = load_items()
+    items.append({"url": url, "image": image_url})
+    save_items(items)
+
+    update.message.reply_text("Item added successfully!")
+
+def broadcast(update: Update, context: CallbackContext):
+    if update.effective_user.id != ADMIN_ID:
+        update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    if not context.args:
+        update.message.reply_text("Please provide a message to broadcast.")
+        return
+
+    message = " ".join(context.args)
+    sent, blocked = 0, 0
+
+    for user_id in users_data.keys():
+        try:
+            context.bot.send_message(chat_id=int(user_id), text=message)
+            sent += 1
+        except (BadRequest, TelegramError) as e:
+            if "bot was blocked by the user" in str(e):
+                blocked += 1
+
+    update.message.reply_text(f"Broadcast completed. Sent: {sent}, Blocked: {blocked}")
+
+# Stats command handler for the admin
+def stats(update: Update, context: CallbackContext):
+    # Only allow the admin to access this command
+    if update.effective_user.id != ADMIN_ID:
+        update.message.reply_text("You are not authorized to use this command.")
+        return
+
+    # Calculate statistics from the user data
+    blocked_users = sum(1 for user in users_data.values() if user.get("blocked", False))
+    active_users = len(users_data) - blocked_users
+    new_users_today = sum(1 for user in users_data.values() if user.get("date_joined", "") == time.strftime("%Y-%m-%d"))
+
+    # Construct the stats message
+    stats_message = (
+        f"📊 Bot Statistics:\n\n"
+        f"Total Users: {len(users_data)}\n"
+        f"Active Users: {active_users}\n"
+        f"Blocked Users: {blocked_users}\n"
+        f"New Users Today: {new_users_today}"
+    )
     
-    update.message.reply_text(message_text, reply_markup=reply_markup)
+    # Send the stats message to the admin
+    update.message.reply_text(stats_message)
 
-# VIP command
-def vip(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
-    if user_id in users_data and users_data[user_id]["is_vip"]:
-        update.message.reply_text("Welcome, VIP! Enjoy your exclusive content 🔥")
-    else:
-        update.message.reply_text("VIP content is only available to users with VIP status. Refer 50 people to get VIP access.")
-
-# Error handler
+# Error handling for the bot
 def error_handler(update: Update, context: CallbackContext):
     logger.error(f"Update {update} caused error {context.error}")
-    if update and update.message:
-        update.message.reply_text("An error occurred. Please try again later.")
 
 def main():
-    updater = Updater(BOT_TOKEN)
-    dispatcher = updater.dispatcher
+    # Start the bot
+    updater = Updater(token=BOT_TOKEN, use_context=True)
+    job_queue = updater.job_queue
+    dp = updater.dispatcher
 
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("gen", gen))
-    dispatcher.add_handler(CommandHandler("alive", alive))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(CommandHandler("vip", vip))
-    dispatcher.add_handler(CommandHandler("referral", referral))
+    # Register command handlers
+    updater.dispatcher.add_handler(CommandHandler("start", start))
+    updater.dispatcher.add_handler(CommandHandler("gen", gen))
+    updater.dispatcher.add_handler(CommandHandler("alive", alive))
+    updater.dispatcher.add_handler(CommandHandler("help", help_command))
+    updater.dispatcher.add_handler(CommandHandler("vip", vip))
+    updater.dispatcher.add_handler(CommandHandler("referral", referral))
+    updater.dispatcher.add_handler(CommandHandler("data", data))
+    updater.dispatcher.add_handler(CommandHandler("additem", add_item))
+    updater.dispatcher.add_handler(CommandHandler("stats", stats))
+    dp.add_handler(CommandHandler("broadcast", broadcast))
 
-    # Register the error handler
-    dispatcher.add_error_handler(error_handler)
+    # Register error handler
+    updater.dispatcher.add_error_handler(error_handler)
 
+    # Schedule the hourly data send to admin
+    job_queue.run_repeating(hourly_data_send, interval=3600, first=0)
+
+    # Start polling for updates
     updater.start_polling()
     updater.idle()
 
